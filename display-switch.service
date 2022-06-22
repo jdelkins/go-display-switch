@@ -1,0 +1,14 @@
+# You can copy this into your ~/.config/systemd/user directory and then
+# systemctl --user enable --now display-switch.service. Be sure to edit the
+# ddcutil commands to match your setup.
+
+[Unit]
+Description=Monitor USB bus to control monitor inputs
+
+[Service]
+Type=exec
+ExecStart=go-display-switch -vendorid 445a -modelid 2260 -connect "ddcutil -g DEL setvcp 60 0x0f" -disconnect "ddcutil -g DEL setvcp 60 0x11"
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
