@@ -83,7 +83,7 @@ func handleEvent(ev netlink.UEvent) {
 	case netlink.REMOVE:
 		cmd = disconnectCommand
 	}
-	if cmd == nil {
+	if cmd == nil || *cmd == "" {
 		log.Printf("No command configured. Ignoring")
 		return
 	}
@@ -91,7 +91,7 @@ func handleEvent(ev netlink.UEvent) {
 	log.Printf("Executing: %s", *cmd)
 	out_b, err := exec.Command("/bin/sh", "-c", *cmd).CombinedOutput()
 	if err != nil {
-		log.Printf("ERROR: %s", out_b)
+		log.Printf("ERROR: %s", err)
 	}
 	if string(out_b) != "" {
 		log.Printf("Command output: %s", out_b)
