@@ -36,6 +36,20 @@ Dell monitor input to DisplayPort-1 (`0x0f`) on connect, and to HDMI-1 (`0x11`)
 on disconnect. You can use `ddcutil probe` to get clues about which VCP values
 are controllable via DDC/CI, and what the accepted values are.
 
+Note that the `-vendorid` and `-modelid` flags can be [regular
+expressions](https://gobyexample.com/regular-expressions), or even omitted
+altogether to catch every input device.
+
+### Debounce
+
+As many peripherals, especially modern keyboards and mice, present multiple
+input devices, there is a good chance that attaching a device would trigger
+a series of events that would be caught by a given `-vendorid` and `-modelid`
+combination. Accordingly, I introduce a 1 second debounce, intended to limit
+actionable events to at most one per second. This means that you will need to
+wait at least 1 second between detaching and attaching a device in order to
+execute both commands.
+
 ### Options description
 
 ```
