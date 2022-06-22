@@ -52,7 +52,7 @@ func main() {
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	go func() {
 		<-signals
-		log.Println("Exiting")
+		log.Println("Signal received. Exiting")
 		close(mon)
 		os.Exit(0)
 	}()
@@ -60,7 +60,12 @@ func main() {
 	// Handle messages
 	for {
 		select {
-		case uevent := <-dqueue:
+		case uevent, ok := <-dqueue:
+			if !ok {
+				log.Println("Event stream closed. Bye")
+				close(mon)
+				os.Exit(0)
+			}
 			go handleEvent(uevent)
 		case err := <-errors:
 			log.Println("ERROR:", err)
@@ -71,13 +76,13 @@ func main() {
 func handleEvent(ev netlink.UEvent) {
 	var cmd *string
 
+	log.Printf("Matching %s event received", ev.Action)
 	switch ev.Action {
 	case netlink.ADD:
 		cmd = connectCommand
 	case netlink.REMOVE:
 		cmd = disconnectCommand
 	}
-	log.Printf("Event: %v", ev)
 	if cmd == nil {
 		log.Printf("No command configured. Ignoring")
 		return
@@ -89,46 +94,29 @@ func handleEvent(ev netlink.UEvent) {
 		log.Printf("ERROR: %s", out_b)
 	}
 	if string(out_b) != "" {
-		log.Printf("Non-error output: %s", out_b)
+		log.Printf("Command output: %s", out_b)
 	}
 }
 
 func debounce(interval time.Duration, input chan netlink.UEvent) chan netlink.UEvent {
 	output := make(chan netlink.UEvent)
-
 	go func() {
-		var buffer netlink.UEvent
-		var ok bool
-
-		// We do not start wating for interval until called at least once
-		buffer, ok = <-input
-		if !ok {
-			// Channel closed, we're done
-			close(output)
-			return
-		}
-
-		// We start wating for an interval
+		enabled := true
 		for {
 			select {
-			case buffer, ok = <-input:
+			case ev, ok := <-input:
 				if !ok {
 					// Channel closed, we're done
 					close(output)
 					return
 				}
+				if enabled {
+					output <- ev
+					enabled = false
+				}
 
 			case <-time.After(interval):
-				// interval has appsed and we have data, so send it
-				output <- buffer
-				// Wait for data again before starting a new interval
-				buffer, ok = <-input
-				if !ok {
-					close(output)
-					return
-				}
-				// If channel is not closed, we may have more data coming.
-				// Restart debouncing timer
+				enabled = true
 			}
 		}
 	}()
