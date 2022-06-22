@@ -1,0 +1,10 @@
+add_command = "ddcutil -g DEL setvcp 60 0x0f"
+remove_command = "ddcutil -g DEL setvcp 60 0x11"
+debounce_window = "250ms"
+
+[[rules]]
+action = "add|remove"
+
+[rules.env]
+ID_VENDOR_ID = "445a"
+ID_MODEL_ID = "2260"

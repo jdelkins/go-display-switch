@@ -1,49 +1,88 @@
 package main
 
 import (
-	"flag"
+	"encoding/json"
 	"log"
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/pilebones/go-udev/netlink"
+	flag "github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
 
 var (
-	vendorId          *string = flag.String("vendorid", "", "Vendor ID of monitored usb device")
-	modelId           *string = flag.String("modelid", "", "Product ID of monitored usb device")
-	connectCommand    *string = flag.String("connect", "", "Command to execute on connect. Will be run with 'sh -c'")
-	disconnectCommand *string = flag.String("disconnect", "", "Command to execute on disconnect. Will be run with 'sh -c'")
+	configFile *string
+	rulesJson  *string
+	debug      bool
 )
+
+func init() {
+	viper.SetConfigName("display-switch")
+	cfg := os.Getenv("XDG_CONFIG_HOME")
+	if cfg == "" {
+		cfg = os.Getenv("HOME") + "/.config"
+	}
+	viper.AddConfigPath(cfg + "/display-switch/")
+	viper.AddConfigPath("/etc/display-switch/")
+	viper.AddConfigPath(".")
+	configFile = flag.StringP("config", "c", "", "Pathname of configuration file")
+	rulesJson = flag.String("rules", "", "JSON string defining device event matching rules")
+	flag.StringP("add-command", "a", "", "Command to run when matching device is connected/added")
+	flag.StringP("remove-command", "r", "", "Command to run when matching device is disconnected/removed")
+	flag.BoolVarP(&debug, "debug", "d", false, "Print extra debugging information")
+	dur, _ := time.ParseDuration("500ms")
+	flag.Duration("debounce-window", dur, "How long to wait after an event before processing more events")
+	flag.CommandLine.SetNormalizeFunc(aliasNormalize)
+}
+
+func aliasNormalize(f *flag.FlagSet, name string) flag.NormalizedName {
+	name = strings.Replace(name, "-", "_", -1)
+	return flag.NormalizedName(name)
+}
 
 func main() {
 	flag.Parse()
+	if configFile != nil {
+		viper.SetConfigFile(*configFile)
+	}
+	viper.BindPFlags(flag.CommandLine)
+	if err := viper.ReadInConfig(); err != nil {
+		log.Fatalf("Could not read config file: %s", err)
+	}
 
-	_ar := "add|remove"
-	filt := netlink.RuleDefinition{
-		Action: &_ar,
-		Env: map[string]string{
-			"SUBSYSTEM": "input",
-		},
+	var filt netlink.RuleDefinitions
+	if rulesJson != nil && *rulesJson != "" {
+		if debug {
+			log.Println("Parsing rules:", viper.GetString("rules"))
+		}
+		if err := json.Unmarshal([]byte(*rulesJson), &filt.Rules); err != nil {
+			log.Fatalf("Could not parse match rules: %s. Bailing out.", err)
+			os.Exit(1)
+		}
+	} else if err := viper.UnmarshalKey("rules", &filt.Rules); err != nil {
+		log.Fatalf("Could not parse match rules: %s. Bailing out.", err)
+		os.Exit(1)
 	}
-	if vendorId != nil {
-		filt.Env["ID_VENDOR_ID"] = *vendorId
-	}
-	if modelId != nil {
-		filt.Env["ID_MODEL_ID"] = *modelId
+	if debug {
+		log.Printf("Rules: %v", filt)
 	}
 
 	conn := new(netlink.UEventConn)
 	if err := conn.Connect(netlink.UdevEvent); err != nil {
-		log.Fatalf("Unable to connect ot Netlink Kobject Uevent socket: %s", err)
+		log.Fatalf("Unable to connect to Netlink Kobject Uevent socket: %s", err)
 	}
 	defer conn.Close()
 
 	queue := make(chan netlink.UEvent)
-	dqueue := debounce(1*time.Second, queue)
+	dqueue := debounce(viper.GetDuration("debounce_window"), queue)
+	if debug {
+		log.Printf("Using %s as the debounce window", viper.GetDuration("debounce_window"))
+	}
 	errors := make(chan error)
 	mon := conn.Monitor(queue, errors, &filt)
 
@@ -74,22 +113,22 @@ func main() {
 }
 
 func handleEvent(ev netlink.UEvent) {
-	var cmd *string
+	var cmd string
 
 	log.Printf("Matching %s event received", ev.Action)
 	switch ev.Action {
 	case netlink.ADD:
-		cmd = connectCommand
+		cmd = viper.GetString("add_command")
 	case netlink.REMOVE:
-		cmd = disconnectCommand
+		cmd = viper.GetString("remove_command")
 	}
-	if cmd == nil || *cmd == "" {
+	if cmd == "" {
 		log.Printf("No command configured. Ignoring")
 		return
 	}
 
-	log.Printf("Executing: %s", *cmd)
-	out_b, err := exec.Command("/bin/sh", "-c", *cmd).CombinedOutput()
+	log.Printf("Executing: %s", cmd)
+	out_b, err := exec.Command("/bin/sh", "-c", cmd).CombinedOutput()
 	if err != nil {
 		log.Printf("ERROR: %s", err)
 	}
