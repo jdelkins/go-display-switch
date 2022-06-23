@@ -37,12 +37,10 @@ func init() {
 	flag.BoolVarP(&debug, "debug", "d", false, "Print extra debugging information")
 	dur, _ := time.ParseDuration("500ms")
 	flag.Duration("debounce-window", dur, "How long to wait after an event before processing more events")
-	flag.CommandLine.SetNormalizeFunc(aliasNormalize)
-}
-
-func aliasNormalize(f *flag.FlagSet, name string) flag.NormalizedName {
-	name = strings.Replace(name, "-", "_", -1)
-	return flag.NormalizedName(name)
+	flag.CommandLine.SetNormalizeFunc(func(f *flag.FlagSet, name string) flag.NormalizedName {
+		name = strings.Replace(name, "-", "_", -1)
+		return flag.NormalizedName(name)
+	})
 }
 
 func main() {
@@ -78,8 +76,9 @@ func main() {
 	}
 	defer conn.Close()
 
+	reset := make(chan bool)
 	queue := make(chan netlink.UEvent)
-	dqueue := debounce(viper.GetDuration("debounce_window"), queue)
+	dqueue := debounce(viper.GetDuration("debounce_window"), queue, reset)
 	if debug {
 		log.Printf("Using %s as the debounce window", viper.GetDuration("debounce_window"))
 	}
@@ -105,14 +104,14 @@ func main() {
 				close(mon)
 				os.Exit(0)
 			}
-			go handleEvent(uevent)
+			go handleEvent(uevent, reset)
 		case err := <-errors:
 			log.Println("ERROR:", err)
 		}
 	}
 }
 
-func handleEvent(ev netlink.UEvent) {
+func handleEvent(ev netlink.UEvent, reset chan bool) {
 	var cmd string
 
 	log.Printf("Matching %s event received", ev.Action)
@@ -124,6 +123,7 @@ func handleEvent(ev netlink.UEvent) {
 	}
 	if cmd == "" {
 		log.Printf("No command configured. Ignoring")
+		reset <- true
 		return
 	}
 
@@ -137,10 +137,16 @@ func handleEvent(ev netlink.UEvent) {
 	}
 }
 
-func debounce(interval time.Duration, input chan netlink.UEvent) chan netlink.UEvent {
+func debounce(interval time.Duration, input chan netlink.UEvent, reset chan bool) chan netlink.UEvent {
 	output := make(chan netlink.UEvent)
 	go func() {
 		enabled := true
+		do_reset := func() {
+			if !enabled && debug {
+				log.Println("Reset debounce")
+			}
+			enabled = true
+		}
 		for {
 			select {
 			case ev, ok := <-input:
@@ -153,9 +159,10 @@ func debounce(interval time.Duration, input chan netlink.UEvent) chan netlink.UE
 					output <- ev
 					enabled = false
 				}
-
+			case <-reset:
+				do_reset()
 			case <-time.After(interval):
-				enabled = true
+				do_reset()
 			}
 		}
 	}()
