@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path"
 	"strings"
 	"syscall"
 	"time"
@@ -25,9 +26,10 @@ func init() {
 	viper.SetConfigName("display-switch")
 	cfg := os.Getenv("XDG_CONFIG_HOME")
 	if cfg == "" {
-		cfg = os.Getenv("HOME") + "/.config"
+		cfg = path.Join(os.Getenv("HOME"), ".config")
 	}
-	viper.AddConfigPath(cfg + "/display-switch/")
+	cfg = path.Join(cfg, "display-switch")
+	viper.AddConfigPath(cfg)
 	viper.AddConfigPath("/etc/display-switch/")
 	viper.AddConfigPath(".")
 	configFile = flag.StringP("config", "c", "", "Pathname of configuration file")
